@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Shadow Escape - Mobile Limbo Style</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0d0d0d;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #gameContainer {
+            position: relative;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
+            width: 100%;
+            max-width: 800px;
+        }
+        canvas {
+            background: linear-gradient(to bottom, #2b2b2b 0%, #151515 100%);
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+        /* Kontrol Layar Sentuh untuk HP */
+        #mobileControls {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 30px;
+            pointer-events: none; /* Supaya area kosong tidak memblokir klik */
+        }
+        .btn-group {
+            display: flex;
+            gap: 15px;
+            pointer-events: auto;
+        }
+        .touch-btn {
+            width: 65px;
+            height: 65px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 24px;
+            font-weight: bold;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            touch-action: none;
+            transition: background 0.1s, transform 0.1s;
+        }
+        .touch-btn:active {
+            background: rgba(255, 255, 255, 0.25);
+            color: #fff;
+            transform: scale(0.9);
+        }
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <canvas id="limboCanvas" width="800" height="450"></canvas>
+    
+    <!-- Tombol Virtual Layar Sentuh -->
+    <div id="mobileControls">
+        <div class="btn-group">
+            <div class="touch-btn" id="btnLeft">←</div>
+            <div class="touch-btn" id="btnRight">→</div>
+        </div>
+        <div class="btn-group">
+            <div class="touch-btn" id="btnJump">↑</div>
+        </div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById("limboCanvas");
+const ctx = canvas.getContext("2d");
+
+// Sistem Input (Mendukung Keyboard PC & Sentuhan HP)
+const keys = { ArrowLeft: false, ArrowRight: false, ArrowUp: false };
+
+// Fungsi untuk pasang event listener tombol mobile
+function setupTouchButton(elementId, keyName) {
+    const btn = document.getElementById(elementId);
+    
+    // Event ketika ditekan
+    btn.addEventListener("touchstart", (e) => {
+        e.preventDefault();
+        keys[keyName] = true;
+    });
+    
+    // Event ketika dilepas
+    btn.addEventListener("touchend", (e) => {
+        e.preventDefault();
+        keys[keyName] = false;
+    });
+}
+
+// Pasang kontrol sentuh
+setupTouchButton("btnLeft", "ArrowLeft");
+setupTouchButton("btnRight", "ArrowRight");
+setupTouchButton("btnJump", "ArrowUp");
+
+// Tetap dukung keyboard PC untuk testing
+window.addEventListener("keydown", e => { if(e.key in keys) keys[e.key] = true; });
+window.addEventListener("keyup", e => { if(e.key in keys) keys[e.key] = false; });
+
+// Karakter Utama (Anak Siluet)
+const player = {
+    x: 80,
+    y: 300,
+    width: 16,
+    height: 32,
+    velocityX: 0,
+    velocityY: 0,
+    speed: 3.5,
+    gravity: 0.4,
+    jumpForce: -8.5,
+    grounded: false,
+    eyePulse: 0
+};
+
+// Objek Kotak Teka-teki (Bisa Didorong)
+const box = {
+    x: 320,
+    y: 300,
+    width: 40,
+    height: 40,
+    velocityX: 0,
+    gravity: 0.4,
+    grounded: false
+};
+
+// Struktur Level (Pijakan Tanah dan Duri)
+const platforms = [
+    { x: 0, y: 380, width: 250, height: 70 },    
+    { x: 250, y: 430, width: 200, height: 20, isSpikes: true }, 
+    { x: 450, y: 350, width: 350, height: 100 }   
+];
+
+// Partikel Kabut Atmosferik
+const particles = [];
+for (let i = 0; i < 20; i++) {
+    particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        radius: Math.random() * 40 + 20,
+        speed: Math.random() * 0.2 + 0.05
+    });
+}
+
+function update() {
+    // 1. Pergerakan Pemain
+    if (keys["ArrowRight"]) player.velocityX = player.speed;
+    else if (keys["ArrowLeft"]) player.velocityX = -player.speed;
+    else player.velocityX *= 0.8; 
+
+    // Lompat
+    if (keys["ArrowUp"] && player.grounded) {
+        player.velocityY = player.jumpForce;
+        player.grounded = false;
+    }
+
+    // Gravitasi Pemain & Kotak
+    player.velocityY += player.gravity;
+    box.velocityY += box.gravity;
+
+    player.x += player.velocityX;
+    player.y += player.velocityY;
+    
+    box.x += box.velocityX;
+    box.y += box.gravity; 
+    box.velocityX *= 0.8; 
+
+    player.grounded = false;
+    box.grounded = false;
+
+    // 2. Deteksi Tabrakan Tanah & Duri
+    platforms.forEach(plat => {
+        if (checkCollision(player, plat)) {
+            if (plat.isSpikes) {
+                gameOver();
+            } else {
+                resolvePlatformCollision(player, plat);
+            }
+        }
+        if (checkCollision(box, plat) && !plat.isSpikes) {
+            resolvePlatformCollision(box, plat);
+        }
+    });
+
+    // 3. Mekanik Dorong Kotak
+    if (checkCollision(player, box)) {
+        if (player.x + player.width - player.velocityX <= box.x) {
+            box.velocityX = player.speed * 0.6;
+            player.x = box.x - player.width;
+        } else if (player.x - player.velocityX >= box.x + box.width) {
+            box.velocityX = -player.speed * 0.6;
+            player.x = box.x + box.width;
+        }
+        else if (player.y + player.height - player.velocityY <= box.y) {
+            player.y = box.y - player.height;
+            player.velocityY = 0;
+            player.grounded = true;
+        }
+    }
+
+    // Gerakan kabut background
+    particles.forEach(p => {
+        p.x -= p.speed;
+        if (p.x + p.radius < 0) p.x = canvas.width + p.radius;
+    });
+
+    player.eyePulse += 0.05;
+
+    draw();
+    requestAnimationFrame(update);
+}
+
+function checkCollision(obj1, obj2) {
+    return obj1.x < obj2.x + obj2.width &&
+           obj1.x + obj1.width > obj2.x &&
+           obj1.y < obj2.y + obj2.height &&
+           obj1.y + obj1.height > obj2.y;
+}
+
+function resolvePlatformCollision(obj, plat) {
+    if (obj.y + obj.height - obj.velocityY <= plat.y) {
+        obj.y = plat.y - obj.height;
+        obj.velocityY = 0;
+        if (obj === player) player.grounded = true;
+    }
+}
+
+function gameOver() {
+    alert("Kamu terjatuh ke duri kegelapan!");
+    player.x = 80;
+    player.y = 300;
+    player.velocityX = 0;
+    player.velocityY = 0;
+    box.x = 320;
+    box.y = 300;
+    box.velocityX = 0;
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 1. Gambar Kabut
+    ctx.fillStyle = "rgba(255, 255, 255, 0.03)";
+    particles.forEach(p => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // Vignette Cahaya
+    let gradient = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 100, canvas.width/2, canvas.height/2, 400);
+    gradient.addColorStop(0, "rgba(0,0,0,0)");
+    gradient.addColorStop(1, "rgba(0,0,0,0.6)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 2. Gambar Tanah & Duri
+    platforms.forEach(plat => {
+        if (plat.isSpikes) {
+            ctx.fillStyle = "#111111";
+            ctx.fillRect(plat.x, plat.y + 10, plat.width, plat.height);
+            ctx.fillStyle = "#000000";
+            for (let i = plat.x; i < plat.x + plat.width; i += 10) {
+                ctx.beginPath();
+                ctx.moveTo(i, plat.y + 20);
+                ctx.lineTo(i + 5, plat.y);
+                ctx.lineTo(i + 10, plat.y + 20);
+                ctx.fill();
+            }
+        } else {
+            ctx.fillStyle = "#000000";
+            ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+        }
+    });
+
+    // 3. Gambar Kotak
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(box.x, box.y, box.width, box.height);
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(box.x + 3, box.y + 3, box.width - 6, box.height - 6);
+
+    // 4. Gambar Pemain
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(player.x, player.y, player.width, player.height);
+
+    // Mata Putih Bersinar
+    if (Math.sin(player.eyePulse) > -0.9) {
+        ctx.fillStyle = "#ffffff";
+        ctx.shadowColor = "#ffffff";
+        ctx.shadowBlur = 4;
+        ctx.fillRect(player.x + 10, player.y + 6, 3, 3);
+    }
+    ctx.shadowBlur = 0; 
+}
+
+update();
+</script>
+
+</body>
+</html>
